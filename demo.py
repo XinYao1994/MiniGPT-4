@@ -73,7 +73,7 @@ def gradio_reset(chat_state, img_list):
         chat_state.messages = []
     if img_list is not None:
         img_list = []
-    return None, gr.update(value=None, interactive=True), gr.update(placeholder='Please upload your image first', interactive=False),gr.update(value="Upload & Start Chat", interactive=True), chat_state, img_list
+    return None, gr.update(value=None, interactive=True), gr.update(placeholder='Please upload your image first', interactive=False), gr.update(placeholder='Input yout query', interactive=True), gr.update(value="Upload & Start Chat", interactive=True), chat_state, img_list
 
 def upload_img(gr_img, text_input, chat_state):
     if gr_img is None:
@@ -105,6 +105,50 @@ title = """<h1 align="center">Demo of MiniGPT-4</h1>"""
 description = """<h3>This is the demo of MiniGPT-4. Upload your images and start chatting!</h3>"""
 article = """<p><a href='https://minigpt-4.github.io'><img src='https://img.shields.io/badge/Project-Page-Green'></a></p><p><a href='https://github.com/Vision-CAIR/MiniGPT-4'><img src='https://img.shields.io/badge/Github-Code-blue'></a></p><p><a href='https://raw.githubusercontent.com/Vision-CAIR/MiniGPT-4/main/MiniGPT_4.pdf'><img src='https://img.shields.io/badge/Paper-PDF-red'></a></p>
 """
+
+import cachetools
+from embeddings.clip import ClipEmbedder
+from vec_db.faiss import Faiss
+from reader.image import ImageReader
+from chatstorage import ChatStorage
+
+v_emb_table = ClipEmbedder(model='openai/clip-vit-base-patch32')
+vec_db = Faiss("./faiss.index", v_emb_table.dimension, 1)
+reader = ImageReader()
+obj_db = {}
+storage = ChatStorage(reader, v_emb_table, vec_db, cachetools.LRUCache(1000000), obj_db, None)
+storage.load_image_data("/mnt/e/Data/chatStorage/datasets/test_data")
+
+def test_moe(user_message):
+    # if not storage.load_objdb():
+    #     storage.load_data("/home/xyao/data/V200FS")
+    #     storage.save_objdb()
+    # vec_db.flush()
+    return storage.accept_moe(user_message, False)
+
+def gradio_moe_ask(user_message, gr_img, chatbot, chat_state):
+    if len(user_message) == 0:
+        return gr.update(interactive=True, placeholder='Input should not be empty!'), chatbot, chat_state, None
+    # select image
+    image_path = test_moe(user_message)
+    # upload image
+    chat_state = CONV_VISION.copy()
+    img_list = []
+    llm_message = chat.upload_img(image_path, chat_state, img_list)
+    # ask
+    chat.ask(user_message, chat_state)
+    chatbot = chatbot + [[user_message, None]]
+    return '', gr.update(interactive=False, value=image_path), chatbot, chat_state, img_list
+
+def gradio_moe_answer(chatbot, chat_state, img_list, num_beams, temperature):
+    llm_message = chat.answer(conv=chat_state,
+                              img_list=img_list,
+                              num_beams=num_beams,
+                              temperature=temperature,
+                              max_new_tokens=300,
+                              max_length=2000)[0]
+    chatbot[-1][1] = llm_message
+    return chatbot, chat_state, img_list
 
 #TODO show examples below
 
@@ -142,12 +186,18 @@ with gr.Blocks() as demo:
             img_list = gr.State()
             chatbot = gr.Chatbot(label='MiniGPT-4')
             text_input = gr.Textbox(label='User', placeholder='Please upload your image first', interactive=False)
+            demo_moe_cache_input = gr.Textbox(label='Moe_User', placeholder='Input yout query', interactive=True)
     
     upload_button.click(upload_img, [image, text_input, chat_state], [image, text_input, upload_button, chat_state, img_list])
     
     text_input.submit(gradio_ask, [text_input, chatbot, chat_state], [text_input, chatbot, chat_state]).then(
         gradio_answer, [chatbot, chat_state, img_list, num_beams, temperature], [chatbot, chat_state, img_list]
     )
-    clear.click(gradio_reset, [chat_state, img_list], [chatbot, image, text_input, upload_button, chat_state, img_list], queue=False)
+
+    demo_moe_cache_input.submit(gradio_moe_ask, [demo_moe_cache_input, image, chatbot, chat_state], [demo_moe_cache_input, image, chatbot, chat_state, img_list]).then(
+        gradio_moe_answer, [chatbot, chat_state, img_list, num_beams, temperature], [chatbot, chat_state, img_list]
+    )
+
+    clear.click(gradio_reset, [chat_state, img_list], [chatbot, image, text_input, demo_moe_cache_input, upload_button, chat_state, img_list], queue=False)
 
 demo.launch(share=True, enable_queue=True)
