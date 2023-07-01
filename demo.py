@@ -73,7 +73,7 @@ def gradio_reset(chat_state, img_list):
         chat_state.messages = []
     if img_list is not None:
         img_list = []
-    return None, gr.update(value=None, interactive=True), gr.update(placeholder='Please upload your image first', interactive=False), gr.update(placeholder='Input yout query', interactive=True), gr.update(value="Upload & Start Chat", interactive=True), chat_state, img_list
+    return None, gr.update(value=None, interactive=True), gr.update(placeholder='Please upload your image first', interactive=False), gr.update(placeholder='Input yout query', interactive=True), gr.update(placeholder='Input yout query', interactive=True), gr.update(value="Upload & Start Chat", interactive=True), chat_state, img_list
 
 def upload_img(gr_img, text_input, chat_state):
     if gr_img is None:
@@ -101,10 +101,10 @@ def gradio_answer(chatbot, chat_state, img_list, num_beams, temperature):
     chatbot[-1][1] = llm_message
     return chatbot, chat_state, img_list
 
-title = """<h1 align="center">Demo of MiniGPT-4</h1>"""
-description = """<h3>This is the demo of MiniGPT-4. Upload your images and start chatting!</h3>"""
-article = """<p><a href='https://minigpt-4.github.io'><img src='https://img.shields.io/badge/Project-Page-Green'></a></p><p><a href='https://github.com/Vision-CAIR/MiniGPT-4'><img src='https://img.shields.io/badge/Github-Code-blue'></a></p><p><a href='https://raw.githubusercontent.com/Vision-CAIR/MiniGPT-4/main/MiniGPT_4.pdf'><img src='https://img.shields.io/badge/Paper-PDF-red'></a></p>
-"""
+title = """<h1 align="center">Demo of chatStorage</h1>"""
+description = """<h3>This is the demo of chatStorage. Upload your images and start chatting!</h3>"""
+# article = """<p><a href='https://minigpt-4.github.io'><img src='https://img.shields.io/badge/Project-Page-Green'></a></p><p><a href='https://github.com/Vision-CAIR/MiniGPT-4'><img src='https://img.shields.io/badge/Github-Code-blue'></a></p><p><a href='https://raw.githubusercontent.com/Vision-CAIR/MiniGPT-4/main/MiniGPT_4.pdf'><img src='https://img.shields.io/badge/Paper-PDF-red'></a></p>
+# """
 
 import cachetools
 from embeddings.clip import ClipEmbedder
@@ -150,12 +150,45 @@ def gradio_moe_answer(chatbot, chat_state, img_list, num_beams, temperature):
     chatbot[-1][1] = llm_message
     return chatbot, chat_state, img_list
 
+# from https://github.com/yuhangzang/ContextDET
+from app_util import ContextDetDemo
+from PIL import Image
+
+contextdet_model = ContextDetDemo('/mnt/e/Data/models/ckpt.pth')
+# choices=['Cloze Test', 'Captioning', 'Question Answering'], only Captioning currently
+
+# def inference_fn_select(text_input, image, chatbot, history=[]):
+#     task_button = 'Captioning'
+#     image_output, chat_output, state = None, None, None
+#     if len(text_input) == 0:
+#         image_output, chat_output, state = contextdet_model.forward(image, "please describe the image", task_button, history)
+#         chatbot = chatbot + [["please describe the image", None]]
+#     else:
+#         image_output, chat_output, state = contextdet_model.forward(image, text_input, task_button, history)
+#         chatbot = chatbot + [[text_input, None]]
+#     chatbot[-1][1] = llm_message
+
+def contextdet_ask(text_input, chatbot, chat_state):
+    if len(text_input) == 0:
+        chatbot = chatbot + [["please describe the image", None]]
+    else:
+        chatbot = chatbot + [[text_input, None]]
+    return '', chatbot, chat_state
+
+def contextdet_answer(image, chatbot, chat_state, history=[]): # history
+    task_button = 'Captioning'
+    if isinstance(image, str):
+        image = Image.open(image).convert('RGB')
+    image_output, chat_output, state = contextdet_model.forward(image, chatbot[-1][0], task_button, history)
+    chatbot[-1][1] = chat_output[-1][1] # 
+    return image_output, chatbot, chat_state
+
 #TODO show examples below
 
 with gr.Blocks() as demo:
     gr.Markdown(title)
     gr.Markdown(description)
-    gr.Markdown(article)
+    # gr.Markdown(article)
 
     with gr.Row():
         with gr.Column(scale=0.5):
@@ -187,6 +220,7 @@ with gr.Blocks() as demo:
             chatbot = gr.Chatbot(label='MiniGPT-4')
             text_input = gr.Textbox(label='User', placeholder='Please upload your image first', interactive=False)
             demo_moe_cache_input = gr.Textbox(label='Moe_User', placeholder='Input yout query', interactive=True)
+            contextdet_input = gr.Textbox(label='Contextdet', placeholder='Input yout query', interactive=True)
     
     upload_button.click(upload_img, [image, text_input, chat_state], [image, text_input, upload_button, chat_state, img_list])
     
@@ -198,6 +232,14 @@ with gr.Blocks() as demo:
         gradio_moe_answer, [chatbot, chat_state, img_list, num_beams, temperature], [chatbot, chat_state, img_list]
     )
 
-    clear.click(gradio_reset, [chat_state, img_list], [chatbot, image, text_input, demo_moe_cache_input, upload_button, chat_state, img_list], queue=False)
+    # contextdet_input.submit(inference_fn_select, 
+    #     [contextdet_input, image, chatbot, chat_state], 
+    #     [contextdet_input, image, chatbot, chat_state, img_list]
+    # )
+    contextdet_input.submit(contextdet_ask, [contextdet_input, chatbot, chat_state], [contextdet_input, chatbot, chat_state]).then(
+        contextdet_answer, [image, chatbot, chat_state], [image, chatbot, chat_state]
+    )
+
+    clear.click(gradio_reset, [chat_state, img_list], [chatbot, image, text_input, demo_moe_cache_input, contextdet_input, upload_button, chat_state, img_list], queue=False)
 
 demo.launch(share=True, enable_queue=True)
